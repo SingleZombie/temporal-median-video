@@ -11,6 +11,7 @@ from multiprocessing import Process, Pool
 
 from PIL import Image
 import imageio
+import torch
 
 IMAGE_EXTENSIONS = ["*.tiff", "*.tif", "*.jpeg", "*.png", "*.jpg", "*.dng"]
 MOVIE_EXTENSIONS = ["*.mp4", "*.mov"]
@@ -62,7 +63,7 @@ def make_a_glob(root_dir):
                 raise IOError("No images found in directory: %s" % root_dir)
         else:
             break
-
+    input_data = sorted(input_data)
     print("First image is: " + input_data[0])
     print("Number of frames found: ", len(input_data))
     return input_data
@@ -111,7 +112,8 @@ def make_output_dir(output_dir):
     while os.path.exists(output_path + "tmf" + str(slitscan_current) + "/"):
         slitscan_current += 1
 
-    os.mkdir(output_path + "tmf" + str(slitscan_current) + "/")
+    os.makedirs(output_path + "tmf" + str(slitscan_current) + "/",
+                exist_ok=True)
     frame_path = output_path + "tmf" + str(slitscan_current) + "/"
     print("Made directory: ", frame_path)
     return frame_path
@@ -180,71 +182,59 @@ def temporal_median_filter_multi2(input_data,
     total_frames = get_frame_limit(limit_frames,
                                    get_number_of_frames(input_data))
 
-    median_array = numpy.zeros(
+    median_array = torch.empty(
         (frame_offset + simultaneous_frames + frame_offset, height, width, 3),
-        numpy.uint8)
-
-    for frame in range(frame_offset):
-        median_array[frame, :, :, :] = numpy.random.randint(low=0,
-                                                            high=255,
-                                                            size=(height,
-                                                                  width, 3))
+        dtype=torch.uint8).cuda()
 
     # read all the frames into big ol' array
     for frame_number in range(simultaneous_frames + frame_offset):
         next_im = get_frame_data(input_data, frame_number)
-        next_array = numpy.array(next_im, numpy.uint8)
+        next_array = torch.from_numpy(numpy.array(next_im, numpy.uint8)).cuda()
         del next_im
         median_array[frame_offset + frame_number, :, :, :] = next_array
         del next_array
+
+    for frame in range(frame_offset):
+        median_array[frame, :, :, :] = median_array[frame_offset]
 
     #                |_____________________total frames______________________|
     # randframes_----0      |--f.o----|s.o|---f.o---|
     # whole_array = numpy.zeros((total_frames, height, width, 3), numpy.uint8)
 
-    p = Pool(processes=8)
     current_frame = 0
-    filtered_array = numpy.zeros((simultaneous_frames, height, width, 3),
-                                 numpy.uint8)
 
     while current_frame < total_frames:
         if current_frame == 0:
             pass
         else:
-            median_array = numpy.roll(median_array,
-                                      -simultaneous_frames,
-                                      axis=0)
+            tmp = median_array[simultaneous_frames:].clone()
+            median_array[0:frame_offset + frame_offset] = tmp
             for x in range(simultaneous_frames):
-                if (current_frame + frame_offset + x) > total_frames:
-                    next_array = numpy.random.randint(low=0,
-                                                      high=255,
-                                                      size=(height, width, 3))
+                if (current_frame + frame_offset + x) >= total_frames:
+                    next_im = get_frame_data(input_data, total_frames - 1)
+                    next_array = torch.from_numpy(
+                        numpy.array(next_im, numpy.uint8)).cuda()
                 else:
                     next_im = get_frame_data(input_data,
                                              frame_offset + current_frame + x)
-                    next_array = numpy.array(next_im, numpy.uint8)
+                    next_array = torch.from_numpy(
+                        numpy.array(next_im, numpy.uint8)).cuda()
                 median_array[frame_offset + frame_offset +
                              x, :, :, :] = next_array
 
         slice_list = []
         for x in range(simultaneous_frames):
-            if (x + current_frame) > total_frames:
+            if (x + current_frame) >= total_frames:
                 break
             else:
                 slice_list.append(median_array[x:(x + frame_offset +
                                                   frame_offset)])
 
-        # calculate medians in our multiprocessing pool
-        results = p.map(median_calc, slice_list)
-        results = []
-        for a in slice_list:
-            results.append(median_calc(a))
-
-        for frame in range(len(results)):
-            filtered_array[frame, :, :, 0] = results[frame][0]
-            filtered_array[frame, :, :, 1] = results[frame][1]
-            filtered_array[frame, :, :, 2] = results[frame][2]
-            img = Image.fromarray(filtered_array[frame, :, :, :])
+        x = torch.stack(slice_list).cuda()
+        x = torch.median(x, 1).values.cpu()
+        for frame in range(x.shape[0]):
+            img = x[frame, :, :, :].numpy()
+            img = Image.fromarray(img)
             frame_name = frame_path + str(current_frame +
                                           frame) + "." + output_format
             img.save(frame_name, format=output_format)
@@ -255,12 +245,6 @@ def temporal_median_filter_multi2(input_data,
     print("\nTotal Time was: %.02f sec. %.02f sec per frame." %
           (end2 - start2, ((end2 - start2) / total_frames)))
     return frame_path
-
-
-def median_calc(median_array):
-    return numpy.median(median_array[:, :, :, 0], axis=0), \
-           numpy.median(median_array[:, :, :, 1], axis=0), \
-           numpy.median(median_array[:, :, :, 2], axis=0)
 
 
 def make_a_video(output_dir, output_format, name):
@@ -279,6 +263,8 @@ def make_a_video(output_dir, output_format, name):
     os.system('ffmpeg -r 24 -i ' + output_dir + '%d.' + output_format +
               ' -c:v libx264 ' + output_dir + name)
 
+
+from line_profiler import LineProfiler
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
