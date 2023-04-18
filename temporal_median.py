@@ -111,7 +111,8 @@ def make_output_dir(output_dir):
     while os.path.exists(output_path + "tmf" + str(slitscan_current) + "/"):
         slitscan_current += 1
 
-    os.mkdir(output_path + "tmf" + str(slitscan_current) + "/")
+    os.makedirs(output_path + "tmf" + str(slitscan_current) + "/",
+                exist_ok=True)
     frame_path = output_path + "tmf" + str(slitscan_current) + "/"
     print("Made directory: ", frame_path)
     return frame_path
@@ -236,9 +237,6 @@ def temporal_median_filter_multi2(input_data,
 
         # calculate medians in our multiprocessing pool
         results = p.map(median_calc, slice_list)
-        results = []
-        for a in slice_list:
-            results.append(median_calc(a))
 
         for frame in range(len(results)):
             filtered_array[frame, :, :, 0] = results[frame][0]
