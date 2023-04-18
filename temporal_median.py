@@ -245,8 +245,8 @@ def temporal_median_filter_multi2(input_data,
             filtered_array[frame, :, :, 1] = results[frame][1]
             filtered_array[frame, :, :, 2] = results[frame][2]
             img = Image.fromarray(filtered_array[frame, :, :, :])
-            frame_name = frame_path + str(current_frame +
-                                          frame) + "." + output_format
+            frame_name = frame_path + "%03d" % (current_frame +
+                                                frame) + "." + output_format
             img.save(frame_name, format=output_format)
         progress(current_frame, total_frames)
         current_frame += simultaneous_frames
@@ -276,7 +276,7 @@ def make_a_video(output_dir, output_format, name):
     """
     if not output_dir.endswith("/"):
         output_dir += "/"
-    os.system('ffmpeg -r 24 -i ' + output_dir + '%d.' + output_format +
+    os.system('ffmpeg -r 24 -i ' + output_dir + '%03d.' + output_format +
               ' -c:v libx264 ' + output_dir + name)
 
 

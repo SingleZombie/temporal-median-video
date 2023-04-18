@@ -1,2 +1,8 @@
 .idea
 venv
+*.jpeg
+*.JPEG
+*.zip
+*.jpg
+*.png
+*.mp4
